@@ -1,86 +1,117 @@
 var FoodRatings = function(foods, cuisines, ratings) {
-    this.foods = {}; // 存储食物信息：{ cuisine, rating }
-    this.cuisineMap = {}; // 按菜系组织食物，结构为 { sortedRatings: 降序评分数组, foodsMap: { 评分: 升序食物数组 } }
+    this.foodMap = {}; // Maps food to { cuisine, rating }
+    this.cuisineMap = {}; // Maps cuisine to { ratingMap, maxRating }
 
     for (let i = 0; i < foods.length; i++) {
-        const name = foods[i], cuisine = cuisines[i], rating = ratings[i];
-        this.foods[name] = { cuisine, rating };
+        const food = foods[i];
+        const cuisine = cuisines[i];
+        const rating = ratings[i];
+        this.foodMap[food] = { cuisine, rating };
 
-        // 初始化菜系结构
         if (!this.cuisineMap[cuisine]) {
-            this.cuisineMap[cuisine] = { sortedRatings: [], foodsMap: {} };
+            this.cuisineMap[cuisine] = {
+                ratingMap: new Map(),
+                maxRating: -Infinity
+            };
         }
-        const c = this.cuisineMap[cuisine];
-
-        // 插入评分到sortedRatings的正确位置（降序）
-        if (!c.foodsMap[rating]) {
-            let idx = 0;
-            while (idx < c.sortedRatings.length && c.sortedRatings[idx] > rating) idx++;
-            if (c.sortedRatings[idx] !== rating) {
-                c.sortedRatings.splice(idx, 0, rating);
-            }
-            c.foodsMap[rating] = [];
+        const cuisineData = this.cuisineMap[cuisine];
+        if (!cuisineData.ratingMap.has(rating)) {
+            cuisineData.ratingMap.set(rating, []);
         }
+        const ratingArray = cuisineData.ratingMap.get(rating);
+        const insertIndex = this.findInsertionPoint(ratingArray, food);
+        ratingArray.splice(insertIndex, 0, food);
 
-        // 插入食物到对应评级的正确位置（升序）
-        const arr = c.foodsMap[rating];
-        let pos = 0;
-        while (pos < arr.length && arr[pos].localeCompare(name) < 0) pos++;
-        arr.splice(pos, 0, name);
+        if (rating > cuisineData.maxRating) {
+            cuisineData.maxRating = rating;
+        }
     }
 };
 
-FoodRatings.prototype.changeRating = function(food, newRating) {
-    const info = this.foods[food];
-    if (!info || info.rating === newRating) return;
-
-    const oldRating = info.rating;
-    const cuisine = info.cuisine;
-    const c = this.cuisineMap[cuisine];
-    if (!c) return;
-
-    // 从旧评分中移除食物
-    const oldArr = c.foodsMap[oldRating];
-    const idx = oldArr.indexOf(food);
-    if (idx !== -1) {
-        oldArr.splice(idx, 1);
-        if (oldArr.length === 0) {
-            delete c.foodsMap[oldRating];
-            // 从sortedRatings中移除旧评分
-            const rIdx = c.sortedRatings.indexOf(oldRating);
-            if (rIdx !== -1) c.sortedRatings.splice(rIdx, 1);
+FoodRatings.prototype.findInsertionPoint = function(arr, target) {
+    let low = 0, high = arr.length;
+    while (low < high) {
+        const mid = (low + high) >>> 1;
+        if (arr[mid] < target) {
+            low = mid + 1;
+        } else {
+            high = mid;
         }
     }
+    return low;
+};
 
-    // 更新食物评分
+/** 
+ * @param {string} food 
+ * @param {number} newRating
+ * @return {void}
+ */
+FoodRatings.prototype.changeRating = function(food, newRating) {
+    const info = this.foodMap[food];
+    const oldRating = info.rating;
+    if (oldRating === newRating) return;
+
+    const cuisine = info.cuisine;
     info.rating = newRating;
 
-    // 插入到新评分
-    if (!c.foodsMap[newRating]) {
-        // 插入评分到sortedRatings
-        let insertIdx = 0;
-        while (insertIdx < c.sortedRatings.length && c.sortedRatings[insertIdx] > newRating) insertIdx++;
-        c.sortedRatings.splice(insertIdx, 0, newRating);
-        c.foodsMap[newRating] = [];
+    const cuisineData = this.cuisineMap[cuisine];
+    // Remove from old rating
+    const oldRatingArray = cuisineData.ratingMap.get(oldRating);
+    if (oldRatingArray) {
+        const index = this.binarySearch(oldRatingArray, food);
+        if (index !== -1) {
+            oldRatingArray.splice(index, 1);
+            if (oldRatingArray.length === 0) {
+                cuisineData.ratingMap.delete(oldRating);
+                if (oldRating === cuisineData.maxRating) {
+                    let max = -Infinity;
+                    for (const r of cuisineData.ratingMap.keys()) {
+                        if (r > max) max = r;
+                    }
+                    cuisineData.maxRating = max !== -Infinity ? max : undefined;
+                }
+            }
+        }
     }
 
-    // 插入食物到新评级的正确位置
-    const newArr = c.foodsMap[newRating];
-    let pos = 0;
-    while (pos < newArr.length && newArr[pos].localeCompare(food) < 0) pos++;
-    newArr.splice(pos, 0, food);
+    // Add to new rating
+    if (!cuisineData.ratingMap.has(newRating)) {
+        cuisineData.ratingMap.set(newRating, []);
+    }
+    const newRatingArray = cuisineData.ratingMap.get(newRating);
+    const insertIndex = this.findInsertionPoint(newRatingArray, food);
+    newRatingArray.splice(insertIndex, 0, food);
+
+    // Update maxRating if new rating is higher or current max is undefined
+    if (cuisineData.maxRating === undefined || newRating > cuisineData.maxRating) {
+        cuisineData.maxRating = newRating;
+    }
 };
 
-FoodRatings.prototype.highestRated = function(cuisine) {
-    const c = this.cuisineMap[cuisine];
-    if (!c) return "";
-
-    // 遍历sortedRatings找到第一个存在的食物数组
-    for (const r of c.sortedRatings) {
-        const arr = c.foodsMap[r];
-        if (arr && arr.length > 0) return arr[0];
+FoodRatings.prototype.binarySearch = function(arr, target) {
+    let left = 0, right = arr.length - 1;
+    while (left <= right) {
+        const mid = Math.floor((left + right) / 2);
+        if (arr[mid] === target) return mid;
+        if (arr[mid] < target) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
     }
-    return "";
+    return -1;
+};
+
+/** 
+ * @param {string} cuisine
+ * @return {string}
+ */
+FoodRatings.prototype.highestRated = function(cuisine) {
+    const cuisineData = this.cuisineMap[cuisine];
+    if (!cuisineData || cuisineData.maxRating === undefined) return null;
+    const maxRating = cuisineData.maxRating;
+    const foods = cuisineData.ratingMap.get(maxRating);
+    return foods && foods.length > 0 ? foods[0] : null;
 };
 
 
@@ -147,4 +178,4 @@ const test = (n) => {
     console.log(`n=${n}, time=${end - start}ms`);
 };
 
-test(10000); //44ms
+test(1000000); //2906ms
